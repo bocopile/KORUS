@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaRadar Daily Report | {{date}}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 4rem 2.5rem;
+      line-height: 1.5;
+      color: #0f0f0f;
+      background: #faf9f7;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    }
+
+    .header {
+      margin-bottom: 4rem;
+      position: relative;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -2rem;
+      left: -1rem;
+      width: 6px;
+      height: 120%;
+      background: #ff4d00;
+    }
+
+    h1 {
+      font-size: 3.5rem;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+      line-height: 1.0;
+      color: #0f0f0f;
+      margin-bottom: 1rem;
+    }
+
+    .subtitle {
+      font-size: 1.25rem;
+      color: #666;
+      font-weight: 400;
+      letter-spacing: -0.01em;
+    }
+
+    .meta {
+      display: flex;
+      gap: 2rem;
+      margin-top: 1.5rem;
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    h2 {
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: #ff4d00;
+      margin: 3rem 0 1.5rem;
+    }
+
+    p {
+      margin-bottom: 1rem;
+      color: #333;
+      font-size: 1.05rem;
+      max-width: 65ch;
+    }
+
+    .highlight-box {
+      background: #0f0f0f;
+      color: #faf9f7;
+      padding: 2.5rem;
+      margin: 2rem 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .highlight-box.positive { border-left: 6px solid #00c853; }
+    .highlight-box.negative { border-left: 6px solid #ff1744; }
+    .highlight-box.neutral  { border-left: 6px solid #ff4d00; }
+
+    .highlight-box p {
+      color: #faf9f7;
+      font-size: 1.3rem;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      line-height: 1.4;
+      max-width: none;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px;
+      margin: 2rem 0;
+      background: #ddd;
+    }
+
+    .stats-grid.four-col {
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+    }
+
+    .stat-card {
+      background: #faf9f7;
+      padding: 1.5rem;
+    }
+
+    .stat-card.primary {
+      background: #ff4d00;
+      color: white;
+    }
+
+    .stat-card.primary .stat-value,
+    .stat-card.primary .stat-label { color: white; }
+
+    .stat-card.positive .stat-value { color: #00c853; }
+    .stat-card.negative .stat-value { color: #ff1744; }
+
+    .stat-value {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      color: #0f0f0f;
+    }
+
+    .stat-label {
+      font-size: 0.65rem;
+      color: #666;
+      margin-top: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      font-size: 0.9rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-family: 'JetBrains Mono', monospace;
+      color: #888;
+      border-bottom: 2px solid #0f0f0f;
+    }
+
+    td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid #eee;
+      color: #333;
+    }
+
+    td.positive { color: #00c853; font-weight: 500; }
+    td.negative { color: #ff1744; font-weight: 500; }
+
+    ul {
+      margin: 1rem 0;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    li {
+      margin-bottom: 0.5rem;
+      color: #333;
+      padding-left: 1.5rem;
+      position: relative;
+      font-size: 1rem;
+    }
+
+    li::before {
+      content: '\2192';
+      position: absolute;
+      left: 0;
+      color: #ff4d00;
+      font-weight: 500;
+    }
+
+    .system-status {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-dot.ok { background: #00c853; }
+    .status-dot.warn { background: #ffab00; }
+    .status-dot.error { background: #ff1744; }
+
+    .footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid #ddd;
+      font-size: 0.7rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Daily Report</h1>
+    <p class="subtitle">AlphaRadar 일일 리포트</p>
+    <div class="meta">
+      <span>{{date}} {{day_of_week}}</span>
+      <span>Generated {{generated_at}}</span>
+    </div>
+  </div>
+
+  <!-- 전일 성과 요약 -->
+  <h2>Performance Summary</h2>
+  <div class="highlight-box {{daily_direction}}">
+    <p>일일 손익 {{daily_pnl}}원 ({{daily_pct}}%) &mdash; 누적 {{total_pnl}}원 ({{total_pct}}%)</p>
+  </div>
+
+  <div class="stats-grid four-col">
+    <div class="stat-card primary">
+      <div class="stat-value">{{total_asset}}</div>
+      <div class="stat-label">Total Asset</div>
+    </div>
+    <div class="stat-card {{daily_class}}">
+      <div class="stat-value">{{daily_pct}}%</div>
+      <div class="stat-label">Daily P&L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{total_pct}}%</div>
+      <div class="stat-label">Cumulative</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{cash_pct}}%</div>
+      <div class="stat-label">Cash Ratio</div>
+    </div>
+  </div>
+
+  <!-- Tier별 현황 -->
+  <h2>Tier Breakdown</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Value</th>
+        <th>Weight</th>
+        <th>Holdings</th>
+        <th>P&L</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Tier1 (Long)</td>
+        <td>{{t1_value}}원</td>
+        <td>{{t1_pct}}%</td>
+        <td>&mdash;</td>
+        <td class="{{t1_class}}">{{t1_pnl}}%</td>
+      </tr>
+      <tr>
+        <td>Tier2 (Swing)</td>
+        <td>{{t2_value}}원</td>
+        <td>{{t2_pct}}%</td>
+        <td>{{t2_count}}개</td>
+        <td class="{{t2_class}}">{{t2_pnl}}%</td>
+      </tr>
+      <tr>
+        <td>Tier3 (Momentum)</td>
+        <td>{{t3_value}}원</td>
+        <td>{{t3_pct}}%</td>
+        <td>{{t3_count}}개</td>
+        <td class="{{t3_class}}">{{t3_pnl}}%</td>
+      </tr>
+      <tr>
+        <td>Cash</td>
+        <td>{{cash}}원</td>
+        <td>{{cash_pct}}%</td>
+        <td>&mdash;</td>
+        <td>&mdash;</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 전일 체결 내역 -->
+  <h2>Executed Trades</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Ticker</th>
+        <th>Tier</th>
+        <th>Qty</th>
+        <th>Price</th>
+        <th>Amount</th>
+        <th>P&L</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each trades}}
+      <tr>
+        <td>{{type}}</td>
+        <td>{{ticker}} ({{name}})</td>
+        <td>T{{tier}}</td>
+        <td>{{qty}}</td>
+        <td>{{price}}원</td>
+        <td>{{amount}}원</td>
+        <td class="{{pnl_class}}">{{pnl}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <!-- 보유 종목 현황 -->
+  <h2>Current Positions</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Ticker</th>
+        <th>Tier</th>
+        <th>Qty</th>
+        <th>Avg Price</th>
+        <th>Current</th>
+        <th>P&L</th>
+        <th>Stop Loss</th>
+        <th>Target</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each positions}}
+      <tr>
+        <td>{{ticker}} ({{name}})</td>
+        <td>T{{tier}}</td>
+        <td>{{qty}}</td>
+        <td>{{avg_price}}원</td>
+        <td>{{current_price}}원</td>
+        <td class="{{pnl_class}}">{{pnl_pct}}%</td>
+        <td>{{stop_loss}}원</td>
+        <td>{{target}}원</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <!-- 시그널 요약 -->
+  <h2>Signal Summary</h2>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{signal_total}}</div>
+      <div class="stat-label">Signals Generated</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{signal_executed}}</div>
+      <div class="stat-label">Executed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{signal_skipped}}</div>
+      <div class="stat-label">Skipped</div>
+    </div>
+  </div>
+  {{#if skip_reasons}}
+  <ul>
+    {{#each skip_reasons}}
+    <li>{{this}}</li>
+    {{/each}}
+  </ul>
+  {{/if}}
+
+  <!-- 시스템 상태 -->
+  <h2>System Status</h2>
+  <div class="system-status">
+    <div class="status-item">
+      <div class="status-dot {{api_status}}"></div>
+      <span>API Errors: {{api_errors}}</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot {{stale_status}}"></div>
+      <span>Stale Data: {{stale_count}}</span>
+    </div>
+    <div class="status-item">
+      <div class="status-dot {{ws_status}}"></div>
+      <span>WS Reconnects: {{ws_reconnects}}</span>
+    </div>
+  </div>
+
+  <!-- 오늘 주목 포인트 -->
+  <h2>Watch Today</h2>
+  <ul>
+    {{#each watch_items}}
+    <li>{{this}}</li>
+    {{/each}}
+  </ul>
+
+  <div class="footer">
+    <span>AlphaRadar v1.0</span>
+    <span>Generated {{generated_at}}</span>
+  </div>
+</body>
+</html>

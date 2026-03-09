@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlphaRadar Monthly Report | {{year}}-{{month}}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 4rem 2.5rem;
+      line-height: 1.5;
+      color: #0f0f0f;
+      background: #faf9f7;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    }
+
+    .header { margin-bottom: 4rem; position: relative; }
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -2rem; left: -1rem;
+      width: 6px; height: 120%;
+      background: #ff4d00;
+    }
+
+    h1 { font-size: 3.5rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1.0; margin-bottom: 1rem; }
+    .subtitle { font-size: 1.25rem; color: #666; font-weight: 400; }
+    .meta { display: flex; gap: 2rem; margin-top: 1.5rem; font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    h2 { font-size: 0.75rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.15em; color: #ff4d00; margin: 3rem 0 1.5rem; }
+    p { margin-bottom: 1rem; color: #333; font-size: 1.05rem; max-width: 65ch; }
+
+    .highlight-box { background: #0f0f0f; color: #faf9f7; padding: 2.5rem; margin: 2rem 0; position: relative; overflow: hidden; }
+    .highlight-box.positive { border-left: 6px solid #00c853; }
+    .highlight-box.negative { border-left: 6px solid #ff1744; }
+    .highlight-box p { color: #faf9f7; font-size: 1.3rem; font-weight: 500; letter-spacing: -0.02em; line-height: 1.4; max-width: none; }
+
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; margin: 2rem 0; background: #ddd; }
+    .stats-grid.four-col { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .stats-grid.six-col { grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; }
+    .stat-card { background: #faf9f7; padding: 1.5rem; }
+    .stat-card.primary { background: #ff4d00; color: white; }
+    .stat-card.primary .stat-value, .stat-card.primary .stat-label { color: white; }
+    .stat-card.positive .stat-value { color: #00c853; }
+    .stat-card.negative .stat-value { color: #ff1744; }
+    .stat-value { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: #0f0f0f; }
+    .stat-label { font-size: 0.6rem; color: #666; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.1em; font-family: 'JetBrains Mono', monospace; }
+
+    table { width: 100%; border-collapse: collapse; margin: 1.5rem 0; font-size: 0.9rem; }
+    th { text-align: left; padding: 0.75rem 1rem; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.1em; font-family: 'JetBrains Mono', monospace; color: #888; border-bottom: 2px solid #0f0f0f; }
+    td { padding: 0.75rem 1rem; border-bottom: 1px solid #eee; color: #333; }
+    td.positive { color: #00c853; font-weight: 500; }
+    td.negative { color: #ff1744; font-weight: 500; }
+
+    ul { margin: 1rem 0; padding-left: 0; list-style: none; }
+    li { margin-bottom: 0.5rem; color: #333; padding-left: 1.5rem; position: relative; font-size: 1rem; }
+    li::before { content: '\2192'; position: absolute; left: 0; color: #ff4d00; font-weight: 500; }
+
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 1.5rem 0; }
+
+    .bar-chart { margin: 1.5rem 0; }
+    .bar-row { display: flex; align-items: center; margin-bottom: 0.5rem; }
+    .bar-label { width: 80px; font-size: 0.75rem; font-family: 'JetBrains Mono', monospace; color: #666; }
+    .bar-track { flex: 1; height: 24px; background: #eee; position: relative; }
+    .bar-fill { height: 100%; position: absolute; left: 50%; }
+    .bar-fill.positive { background: #00c853; }
+    .bar-fill.negative { background: #ff1744; right: 50%; left: auto; }
+    .bar-value { width: 60px; text-align: right; font-size: 0.8rem; font-family: 'JetBrains Mono', monospace; font-weight: 500; margin-left: 0.5rem; }
+
+    .footer { margin-top: 4rem; padding-top: 2rem; border-top: 1px solid #ddd; font-size: 0.7rem; font-family: 'JetBrains Mono', monospace; color: #888; text-transform: uppercase; letter-spacing: 0.1em; display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Monthly Report</h1>
+    <p class="subtitle">AlphaRadar {{year}}년 {{month}}월 월간 리포트</p>
+    <div class="meta">
+      <span>{{year}}.{{month}}.01 ~ {{year}}.{{month}}.{{last_day}}</span>
+      <span>Generated {{generated_at}}</span>
+    </div>
+  </div>
+
+  <!-- 월간 성과 요약 -->
+  <h2>Monthly Performance</h2>
+  <div class="highlight-box {{monthly_direction}}">
+    <p>월 수익률 {{monthly_pct}}% &mdash; 벤치마크(코스피) {{kospi_pct}}% &mdash; Alpha {{alpha_pct}}%</p>
+  </div>
+
+  <div class="stats-grid four-col">
+    <div class="stat-card primary">
+      <div class="stat-value">{{monthly_pct}}%</div>
+      <div class="stat-label">Monthly Return</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{monthly_pnl}}</div>
+      <div class="stat-label">Monthly P&L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{start_asset}}</div>
+      <div class="stat-label">Start Asset</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{end_asset}}</div>
+      <div class="stat-label">End Asset</div>
+    </div>
+  </div>
+
+  <!-- Tier별 성과 -->
+  <h2>Tier Performance</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Return</th>
+        <th>Trades</th>
+        <th>Win Rate</th>
+        <th>Avg Win</th>
+        <th>Avg Loss</th>
+        <th>Profit Factor</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each tiers}}
+      <tr>
+        <td>{{name}}</td>
+        <td class="{{return_class}}">{{return_pct}}%</td>
+        <td>{{trades}}</td>
+        <td>{{win_rate}}%</td>
+        <td class="positive">+{{avg_win}}%</td>
+        <td class="negative">{{avg_loss}}%</td>
+        <td>{{profit_factor}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <!-- 매매 통계 -->
+  <h2>Trading Statistics</h2>
+  <div class="stats-grid six-col">
+    <div class="stat-card">
+      <div class="stat-value">{{total_trades}}</div>
+      <div class="stat-label">Total Trades</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{win_rate}}%</div>
+      <div class="stat-label">Win Rate</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{avg_hold}}</div>
+      <div class="stat-label">Avg Hold (Days)</div>
+    </div>
+    <div class="stat-card positive">
+      <div class="stat-value">{{best_trade_pct}}%</div>
+      <div class="stat-label">Best Trade</div>
+    </div>
+    <div class="stat-card negative">
+      <div class="stat-value">{{worst_trade_pct}}%</div>
+      <div class="stat-label">Worst Trade</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{max_consecutive_loss}}</div>
+      <div class="stat-label">Max Losing Streak</div>
+    </div>
+  </div>
+
+  <!-- 일별 수익률 차트 -->
+  <h2>Daily Returns</h2>
+  <div class="bar-chart">
+    {{#each daily_returns}}
+    <div class="bar-row">
+      <div class="bar-label">{{date}}</div>
+      <div class="bar-track">
+        <div class="bar-fill {{direction}}" style="width: {{bar_width}}%"></div>
+      </div>
+      <div class="bar-value">{{pct}}%</div>
+    </div>
+    {{/each}}
+  </div>
+
+  <!-- 리스크 지표 -->
+  <h2>Risk Metrics</h2>
+  <div class="stats-grid four-col">
+    <div class="stat-card">
+      <div class="stat-value">{{monthly_mdd}}%</div>
+      <div class="stat-label">Monthly MDD</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{worst_day_pct}}%</div>
+      <div class="stat-label">Worst Day</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{stop_loss_count}}</div>
+      <div class="stat-label">Stop Losses</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{vix_block_count}}</div>
+      <div class="stat-label">VIX Blocks</div>
+    </div>
+  </div>
+
+  <!-- 시그널 정확도 -->
+  <h2>Signal Accuracy</h2>
+  <div class="two-col">
+    <div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value">{{total_signals}}</div>
+          <div class="stat-label">Generated</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{executed_signals}}</div>
+          <div class="stat-label">Executed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{buy_hit_rate}}%</div>
+          <div class="stat-label">Buy Hit Rate</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p>미실행 시그널 사후 분석: 실행했으면 <strong>{{missed_pnl}}%</strong></p>
+    </div>
+  </div>
+
+  <!-- 포트폴리오 비중 변화 -->
+  <h2>Portfolio Weight Change</h2>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Tier1</th>
+        <th>Tier2</th>
+        <th>Tier3</th>
+        <th>Cash</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Start</td>
+        <td>{{t1_start}}%</td>
+        <td>{{t2_start}}%</td>
+        <td>{{t3_start}}%</td>
+        <td>{{cash_start}}%</td>
+      </tr>
+      <tr>
+        <td>End</td>
+        <td>{{t1_end}}%</td>
+        <td>{{t2_end}}%</td>
+        <td>{{t3_end}}%</td>
+        <td>{{cash_end}}%</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 시스템 안정성 -->
+  <h2>System Reliability</h2>
+  <div class="stats-grid four-col">
+    <div class="stat-card">
+      <div class="stat-value">{{uptime}}%</div>
+      <div class="stat-label">Uptime</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{total_errors}}</div>
+      <div class="stat-label">API Errors</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{stale_days}}</div>
+      <div class="stat-label">Stale Days</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{reconcile_mismatch}}</div>
+      <div class="stat-label">Mismatches</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>AlphaRadar v1.0</span>
+    <span>Generated {{generated_at}}</span>
+  </div>
+</body>
+</html>
