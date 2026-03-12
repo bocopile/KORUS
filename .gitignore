@@ -9,3 +9,9 @@
 # Editor-based HTTP Client requests
 /httpRequests/
 /.idea/**
+# SubOrchestrator - Auto-generated entries
+.orchestrator/**
+.worktrees/
+.env
+.env.local
+

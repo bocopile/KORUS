@@ -565,6 +565,14 @@ Tier별 파라미터: 6-2(리스크 상수) + 6-3(보유기간, 손절, 익절, 
 - 401 응답 시 즉시 재발급 후 원래 요청 재시도 (HTTP 미들웨어)
 - 동시 갱신 요청 방지: sync.Once 또는 singleflight 패턴
 
+[Hashkey — 주문 API 보안]
+- KIS 공식 문서 기준 현재 "optional" (필수 아님). 단, 데이터 변조 방지를 위해 AlphaRadar는 필수 적용.
+- 매수·매도·정정·취소 등 POST 주문 API 호출 시 Body를 Hashkey API로 서명 후 헤더에 포함
+- GET(조회) API: Hashkey 불필요
+- 흐름: 주문 Body JSON → POST /uapi/hashkey → 응답 hash값 → 주문 요청 헤더 hashkey 필드에 포함
+- KIS API가 Hashkey 검증을 강제화할 경우 미적용 시 주문 거부될 수 있음
+- hash값 로그 출력 금지
+
 [Rate Limit]
 - KIS REST API: 초당 2건 (uber-go/ratelimit). config.yaml `kis_tps` 참조.
 - 주문 API는 별도 제한 확인 필요 (KIS 공지 기준)
@@ -575,9 +583,21 @@ Tier별 파라미터: 6-2(리스크 상수) + 6-3(보유기간, 손절, 익절, 
 ```
 [역할] KIS REST API 주문 Go 개발자
 
-[기능] 현재가/잔고 조회, 시장가·지정가 매수·매도, 주문 취소, 체결 조회
+[기능]
+- 매수가능금액 조회: 주문 전 가용 현금 확인 → Guard Layer 2(AccountGuard) 연동
+- 매도가능수량 조회: 매도 주문 전 보유수량 확인 (내부 상태 불일치 방지)
+- 시장가·지정가 매수·매도
+- 정정주문: 원주문 ID → `parent_order_id` 연결 필수, cancel_reason='AMEND'
+- 취소주문: `cancel_reason` 저장 필수 (소명 Audit Log 연동, 12-3 참조)
+- 체결 조회
 
-[흐름] 시그널 → Guard 계층 (7-6-5) → 주문 실행 → 체결 확인
+[슬리피지 관리]
+- 시장가 주문: 호가 스프레드 SPREAD_WARN(2%) 초과 시 지정가 전환 검토 → Guard SOFT_WARN
+- 지정가 주문: 현재가 ±PRICE_DIVERGE(2%) 이내만 허용 → Guard Layer 4 HARD_BLOCK
+- 체결 후 예상가 대비 1% 초과 슬리피지 발생 시 `orders.context_json`에 기록
+- 수수료/세금 실전 반영: 매수 0.015% + 매도 0.015% + 세금 0.20% → 손익 계산 시 포함
+
+[흐름] 시그널 → Guard 계층 (7-6-5) → Hashkey 서명 → 주문 실행 → 체결 확인
 ※ 주문 실행 모듈은 Guard를 통과한 주문만 처리. 자체 검증 로직 없음.
 ```
 
@@ -586,7 +606,17 @@ Tier별 파라미터: 6-2(리스크 상수) + 6-3(보유기간, 손절, 익절, 
 ```
 [역할] KIS WebSocket Go 개발자
 
-WebSocket: ws://ops.koreainvestment.com:21000
+[WebSocket 접속키 발급/갱신]
+- WS 연결 전 접속키 발급 필수: POST /oauth2/Approval
+- 접속키 유효기간: 24시간 (Access Token과 별도 관리)
+- **발급 제한: 1분당 1회** — 재연결 시 유효기간 내 기존 접속키 재사용 필수. 1분 내 재발급 시도 시 에러
+- 만료 30분 전 자동 갱신 (백그라운드 goroutine, 토큰 갱신 goroutine과 독립 실행)
+- exponential backoff 재연결 시 접속키 재사용 가능 여부 확인 후 재발급 결정
+- 접속키 로그 출력 금지
+
+WebSocket:
+  실전: ws://ops.koreainvestment.com:21000
+  모의: ws://ops.koreainvestment.com:31000  ← 실전과 다름. IS_PAPER_TRADING으로 분기 필수
 구독: H0STCNT0(체결가), H0STASP0(호가), H0STCNI0(체결통보)
 
 goroutine: WebSocket 수신 → channel → 주문 로직 (producer-consumer)
@@ -660,9 +690,11 @@ SOFT  일일 손실 MAX_DAILY_LOSS × 75% 접근 → 경고
 HARD  단일 종목 비중 MAX_SINGLE_PCT 초과
 HARD  거래대금 일평균 MIN_TRADE_VALUE 미만
 HARD  관리종목/투자주의/거래정지
+HARD  VI(변동성완화장치) 발동 중 → 신규 주문 차단 (매도/손절은 허용)
 HARD  Stale 데이터 (stale_threshold 초과) → 매수 차단 (매도/손절은 허용)
 SOFT  호가 스프레드 SPREAD_WARN 초과
 SOFT  당일 급등 +15% 이상 (추격매수 경고)
+SOFT  상/하한가 ±3% 이내 (상/하한가 관여 경고)
 SOFT  실적발표 D-3 ~ D+1 (Tier2)
 
 [Layer 4 — 주문 직전 Guard] (order.go)
@@ -671,6 +703,10 @@ HARD  미체결 주문 존재 시 동일 종목 신규 주문 차단
 HARD  주문 가격 괴리 PRICE_DIVERGE 초과 (현재가 대비)
 HARD  동일 Tier 내 당일 신규 진입 max_daily_entries_per_tier 초과
 HARD  IS_PAPER_TRADING 모의/실전 불일치
+HARD  최소 주문 간격 미준수 (동일 계좌 직전 주문 후 3초 이내 연속 주문 차단) ← KRX 감시 대응
+HARD  15:20 이후 신규 매수 차단 (동시호가/종가 관여 방지) ← KRX 감시 대응
+      ※ 기존 TRADING_END(14:50) 이후 전체 차단과 별개로, 15:20부터 매수만 선차단
+HARD  허수호가 패턴 감지: 동일 종목 당일 미체결 취소 3회 연속 → 해당 종목 당일 신규 주문 차단 ← KRX 감시 대응
 SOFT  주문 금액이 평소 대비 200% 이상
 
 [GuardEngine 구현]
@@ -708,6 +744,56 @@ SKIP  order_guard                   "(앞단 차단으로 미실행)"
 3. 모든 판정 이력 DB 저장 (guard_logs) — 전략 개선/사고 추적용
 4. Guard 임계값은 config.yaml(3-6)에서 로드 — 코드 수정 없이 조정 가능. 리스크 상수 원본은 6-2.
 5. "왜 주문이 안 나갔는지" 3단계 구분: 시그널 미발생 / Guard 차단 / 주문 실패
+```
+
+---
+
+### 7-6-6. 이벤트 기반 매매 (뉴스 → 주문 파이프라인)
+
+```
+[역할] 실시간 뉴스/이벤트 → 매매 신호 변환 Go 개발자
+[Input from] 7-0-2(뉴스 JSON[]), 7-3(통합분석 JSON)
+[Output to] DB(signals) → 7-6-2(주문 실행) via Guard
+[에러 시] 중복 이벤트 → 무시(idempotency). 낮은 신뢰도 → 시그널 생성 skip + 로그.
+
+[이벤트 → 시그널 변환 규칙]
+
+1. 키워드 가중치 (config.yaml event_keywords에서 관리)
+   HIGH_POSITIVE: ["어닝서프라이즈", "FDA 승인", "수주 계약", "자사주 매입", "합병"]
+   HIGH_NEGATIVE: ["대규모 적자", "CFO 사임", "공시 정정", "검찰 조사", "거래정지 예고"]
+   트리거 조건: importance=high + market_impact=긍정/부정 + affected_sectors 보유 종목 1개 이상 일치
+
+2. 신뢰도 점수 산출
+   - AI 3개 감성 분석 평균 (7-3 뉴스 감성 분석 활용)
+   - confidence < 0.6 → 시그널 생성 skip
+   - 단일 매체 단독 보도 → confidence -0.1 (미확인 리스크)
+
+3. 중복 뉴스 처리
+   - 동일 ticker + event_type + 24시간 이내 → 중복 판정, 추가 시그널 생성 금지
+   - idempotency key: SHA256(ticker + event_type + date)
+
+4. 이벤트 → Tier 매핑
+   긍정 공시(수주/계약) → Tier3: 당일 즉시 매매 시그널
+   실적 서프라이즈     → Tier2: 다음 거래일 진입 검토
+   거시지표 서프라이즈  → Tier1: 리밸런싱 트리거 검토
+   부정 뉴스           → 전 Tier: 보유 종목 청산 검토
+
+5. 제약 사항
+   - 장 종료 1시간 이내(13:50 이후) 이벤트 시그널 → 익일 처리 (당일 진입 금지)
+   - 실적발표 D-3~D+1 Tier2 진입 금지 (Guard Layer 3 SOFT_WARN과 연동)
+   - 동일 종목 당일 이벤트 시그널 최대 1회 (중복 주문 방지)
+
+[출력]
+type EventSignal struct {
+    Ticker      string    `json:"ticker"`
+    EventType   string    `json:"event_type"`    // "EARNINGS_BEAT", "CONTRACT", "NEGATIVE_NEWS"
+    Tier        int       `json:"tier"`
+    Signal      string    `json:"signal"`         // BUY | SELL | HOLD
+    Confidence  float64   `json:"confidence"`     // 0.0~1.0
+    NewsIDs     []string  `json:"news_ids"`       // 근거 뉴스 ID 목록 (소명 Audit Log 연동)
+    Reason      string    `json:"reason"`
+    CreatedAt   time.Time `json:"created_at"`
+}
 ```
 
 ---
