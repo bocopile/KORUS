@@ -17,4 +17,10 @@
 .claude/**
 .orchestrator/**
 .orchestrator.backup*/**
-
+# SubOrchestrator - Auto-generated entries
+.orchestrator/checkpoints/
+.orchestrator/conversations/
+.orchestrator/logs/
+.orchestrator/*.jsonl
+.orchestrator/sessions.db
+.orchestrator/approvals/
