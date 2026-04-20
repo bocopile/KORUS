@@ -51,6 +51,12 @@
 | 데이터 저장 | SQLite (초기) → PostgreSQL (운영 안정화 후) |
 | 배포 환경 | Docker + Linux 서버 |
 
+**핵심 운영 원칙:**
+- **Confidence Score**: 3-AI 합의 결과는 `confidence_score: 0.0~1.0` float64로 수치화. `≥0.75` 실행 / `0.60~0.74` SOFT_WARN / `<0.60` skip.
+- **Graceful Degradation**: AI 1개 장애 시 나머지 2개로 합의 진행. 2개 이상 장애 시 신규 매수 중단, 매도/손절은 지속(fail-open).
+- **Swarm 합의**: MiroFish 엔진 미도입. 역할별 관점 분리(fundamental/news/risk) + 2차 반박 라운드는 Go `consensus.go`에 이식.
+- **Knowledge Graph**: 현 단계 보류. PostgreSQL 안정화 후 Neo4j/Graphiti 사이드카 재검토 (8단계~).
+
 **자동매매 대상 범위:**
 - **국내 주식**: KIS REST + WebSocket API를 통한 완전 자동매매
 - **미국 주식/ETF**: 국내 상장 해외 ETF(TIGER 미국나스닥100 등)로 간접 투자 → 7단계에서 KIS 해외주식 API 직접 연동 예정

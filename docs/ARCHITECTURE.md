@@ -124,16 +124,34 @@ Guard 계층 상세:
 3. ConsensusEngine이 응답 비교:
    - signal 방향: BUY/SELL/HOLD 투표 (2/3 이상 → 채택)
    - strength: 3개 평균값 (소수점 반올림)
-   - confidence: 합의 여부에 따라 조정
-     - 3/3 일치 → confidence +1
-     - 2/3 일치 → confidence 유지
-     - 1/3 또는 0/3 → HOLD 강제 (판단 보류)
+   - confidence_score: float64 0.0~1.0 로 표준화 (high/medium/low 레이블 사용 금지)
+     - 3/3 일치 → 1.0
+     - 2/3 일치 → 0.65 (의도적 설계: 다수결은 항상 SOFT_WARN → 포지션 50% 축소)
+       ※ 다수결 합의를 만장일치보다 보수적으로 집행하는 것이 전략 의도입니다.
+     - 1/3 또는 0/3 → 0.0, HOLD 강제 (판단 보류)
+     실행 기준: ≥0.75 실행 가능 / 0.60~0.74 SOFT_WARN / <0.60 skip
    - reason: 합의된 측 AI들의 reason 병합
 4. 합의 결과 + 개별 AI 응답 모두 DB 저장 (추후 정확도 분석)
 
+[관점 필드 방식 (Swarm 합의 — MiroFish 개념 이식)]
+AI별 고정 역할 분리 없이, 각 AI가 동일 스키마 안에서 아래 3개 관점을 모두 채운다:
+  - fundamental_view: 펀더멘털/공시/실적 관점 (BUY|SELL|HOLD + reason)
+  - news_view:        뉴스/매크로/센티먼트 관점
+  - risk_review:      리스크/손절 관점 (최종 합의 후 별도 패스)
+→ 3개 관점의 방향이 모두 일치할 때 confidence_score 최고점 부여.
+
+[AI 장애 시 confidence_score 재계산 규칙]
+정상(3개): 위 표준 점수 적용.
+AI 1개 장애 → 2개 합의:
+  2/2 일치  → confidence_score = 0.70 (SOFT_WARN, 포지션 50% 축소)
+  1/2 불일치 → confidence_score = 0.0 → skip
+AI 2개 장애 → 1개만:
+  confidence_score = 0.55 → 항상 skip (자동 실행 안 함)
+  단, 보유 포지션 청산 시그널은 예외 허용 (fail-open 원칙)
+
 [Fallback 전략]
 → 상세 장애 대응은 12장 참조. 아래는 요약:
-- AI 1개 장애 → 2개 합의 / 2개 장애 → SOFT_WARN / 3개 장애 → skip + 알림
+- AI 1개 장애 → 2개 합의 (2/2 일치 시 SOFT_WARN, 0.70) / 2개 장애 → skip + 긴급 알림 / 3개 장애 → skip + 알림
 
 [비용 최적화]
 - 시그널 생성: 하루 10~20회 호출 × 3 AI ≈ 30~60회/일
@@ -183,7 +201,7 @@ tiers:      # → 6-2, 6-3 참조
 guard:      # → 6-2, 7-6-5 참조
   stale_threshold: "30m"
   max_daily_entries_per_tier: 2
-  half_days: ["2026-01-26", "2026-09-15"]  # 반장일 (설/추석 전일 등)
+  half_days: ["2026-01-26", "2026-09-15"]  # 단축 매매일 (설/추석 전일 등): 12:20 마감은 프로젝트 내부 정책 (KRX 공식 반장 제도 없음)
 
 kis:
   tps: 2                            # KIS REST API 초당 호출 한도
@@ -191,7 +209,7 @@ kis:
 ai:
   consensus_mode: "majority"        # majority | unanimous | primary_with_check
   timeout: "30s"
-  models:
+  models:  # ※ 배포 시 각 API의 최신 안정 버전으로 업데이트. 아래는 설계 시점 기준.
     claude: "claude-sonnet-4-6"
     gemini: "gemini-2.5-pro"
     openai: "gpt-4o"
@@ -226,10 +244,16 @@ Go 내장 cron 선택 근거:
 06:00       미장 마감 데이터 수집
 06:30       모닝 뉴스 수집 + AI 요약
 07:00       모닝 브리핑 발송
-08:00       일일 리포트 발송 (전일 결과)        → 8장 참조
+08:00       일일 리포트 발송 (전일 결과)        → docs/REPORTS.md 참조
 08:30       KRX 장전 특이 지표 수집
 08:50       오늘의 매매 후보 종목 발송
 09:05       장 시작 → WebSocket 모니터링         상주 프로세스
+
+뉴스 수집 주기 (시간대별 차등):
+  장전  06:00~08:50  10분 간격   (브리핑 준비, 가장 중요)
+  장중  09:00~14:50  20분 간격   (장중 속보 대응)
+  장후  15:00~20:00  60분 간격   (익일 참고)
+  긴급  공시/속보     즉시        (KIS 실시간 이벤트 트리거)
 14:50       장 마감 전 미체결 주문 정리
 15:30       장 마감 데이터 저장 + 정산
 
@@ -313,7 +337,7 @@ WantedBy=multi-user.target
 1. 원천(raw) 데이터 보존 — 가공 전 원본을 날짜별 JSON으로 저장
 2. collected_at과 published_at 분리 관리
 3. 거시지표 수정 발표 대비 revision_flag 포함
-4. API별 Rate Limit 준수 (uber-go/ratelimit)
+4. API별 Rate Limit 준수 (golang.org/x/time/rate — 주문용/조회용 인스턴스 분리)
 5. 기대 시각 대비 30분 초과 시 stale 플래그
 
 ### 5-2. 저장 형태
@@ -362,9 +386,13 @@ CREATE TABLE orders (
     filled_qty INTEGER DEFAULT 0,
     filled_price INTEGER,            -- 원 단위
     signal_id INTEGER,
+    parent_order_id INTEGER,          -- 정정/취소 시 원주문 참조 (소명 Audit Log)
+    cancel_reason TEXT,               -- 'STOP_LOSS' | 'GUARD_BLOCK' | 'MANUAL' | 'EXPIRY' | 'RECONCILE'
+    context_json TEXT,                -- 주문 시점 스냅샷: { price, ask1, bid1, vix, spread_pct }
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+-- FK lineage: orders.signal_id → signals.id → signals.consensus_id → ai_consensus.id
 
 CREATE TABLE positions (
     id INTEGER PRIMARY KEY,
@@ -403,6 +431,7 @@ CREATE TABLE signals (
     stop_loss INTEGER,               -- 원 단위
     target_price INTEGER,            -- 원 단위
     consensus_id INTEGER,            -- ai_consensus.id (3-AI 합의 결과 참조)
+    news_ids TEXT,                   -- JSON 배열: 근거 뉴스 ID 목록 (소명 Audit Log 연동)
     created_at TEXT NOT NULL
 );
 
@@ -427,7 +456,7 @@ CREATE TABLE ai_responses (
     response_json TEXT NOT NULL,     -- AI 원본 응답
     signal_direction TEXT,           -- BUY, SELL, HOLD (시그널 태스크 시)
     strength INTEGER,
-    confidence TEXT,
+    confidence_score REAL,           -- 0.0~1.0 float
     latency_ms INTEGER,             -- 응답 시간
     cost_usd REAL,                  -- 호출 비용
     created_at TEXT NOT NULL
@@ -441,7 +470,7 @@ CREATE TABLE ai_consensus (
     vote_result TEXT NOT NULL,       -- "3/3 BUY", "2/3 SELL", "0/3 HOLD"
     final_signal TEXT NOT NULL,      -- BUY, SELL, HOLD
     final_strength INTEGER,
-    final_confidence TEXT,
+    final_confidence_score REAL,     -- 0.0~1.0 float
     dissent_reason TEXT,             -- 소수 의견 AI의 반대 근거
     response_ids TEXT NOT NULL,      -- ai_responses.id 목록 (JSON 배열)
     created_at TEXT NOT NULL

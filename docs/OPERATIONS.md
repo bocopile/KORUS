@@ -20,10 +20,13 @@
 - GitHub Secrets으로 API 키 관리
 - 서버 SSH 키 인증만 허용
 
+**Graceful Degradation 원칙:**
+부분 실패는 전체 중단이 아닌 `null/stale/skip/alert`로 격리한다. **신규 매수는 fail-closed(장애 시 중단), 매도/손절/정산은 fail-open(장애 시에도 지속).**
+
 **장애 대응:**
 - KIS API 장애 → Fail-Closed (신규 매매 자동 중단)
 - AI 1개 장애 → 나머지 2개로 합의 진행 (2/2 일치 시 실행)
-- AI 2개 장애 → 남은 1개 결과를 SOFT_WARN 처리 (자동 실행 안 함, 알림만)
+- AI 2개 장애 → confidence_score = 0.55 → skip (자동 실행 안 함) + 긴급 알림 (청산 시그널 예외 허용)
 - AI 3개 장애 → 시그널 생성 skip + 브리핑 skip + 긴급 알림
 - 네트워크 장애 → WebSocket 자동 재연결 + 실패 시 알림
 - 데이터 불일치 → 매매 중단 + 수동 확인
@@ -58,21 +61,18 @@
 
 | 항목 | 저장 위치 | 보존 기간 |
 |------|-----------|-----------|
-| 전략 판단 근거 | `ai_consensus.reason` + `guard_logs` | 영구 |
+| 전략 판단 근거 | `ai_responses.reason` (consensus_id 조인) + `ai_consensus.dissent_reason` + `guard_logs` | 영구 |
 | 주문 시점 시세 스냅샷 | `orders.context_json` | 영구 |
 | 정정/취소 사유 | `orders.cancel_reason` | 영구 |
 | 원주문-정정/취소 연결 | `orders.parent_order_id` | 영구 |
 
 **orders 테이블 보완 컬럼 (ARCHITECTURE.md 5-3 연동):**
 ```sql
+-- ※ 아래 컬럼은 ARCHITECTURE.md 5-3 기본 스키마에 이미 포함됨.
+-- 하위호환 마이그레이션 참고용으로만 남겨 둠.
 ALTER TABLE orders ADD COLUMN parent_order_id INTEGER;
--- 정정/취소 시 원주문 참조. 소명 시 주문 체인 추적용.
-
 ALTER TABLE orders ADD COLUMN cancel_reason TEXT;
--- 취소 사유: 'STOP_LOSS' | 'GUARD_BLOCK' | 'MANUAL' | 'EXPIRY' | 'RECONCILE'
-
 ALTER TABLE orders ADD COLUMN context_json TEXT;
--- 주문 시점 스냅샷: { "price": 현재가, "ask1": 최우선매도호가, "bid1": 최우선매수호가, "vix": VIX, "spread_pct": 호가스프레드 }
 ```
 
 ---
@@ -105,7 +105,6 @@ ALTER TABLE orders ADD COLUMN context_json TEXT;
 | gorilla/websocket | https://github.com/gorilla/websocket |
 | golang.org/x/time/rate | https://pkg.go.dev/golang.org/x/time/rate |
 | golang.org/x/sync/singleflight | https://pkg.go.dev/golang.org/x/sync/singleflight |
-| uber-go/zap | https://github.com/uber-go/zap |
 | sony/gobreaker | https://github.com/sony/gobreaker |
 | pressly/goose | https://github.com/pressly/goose |
 | robfig/cron | https://github.com/robfig/cron |
