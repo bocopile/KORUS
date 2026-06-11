@@ -100,10 +100,10 @@
 > 각 레이어를 독립 Goroutine으로 분리, Channel로 연결. 한 곳 병목이 전체 매매 타이밍에 영향 없음.
 
 ```
-[Provider Layer] — 수집 Goroutine들
-  G1: KIS WebSocket → 실시간 체결가/호가 수신 → pricesCh
-  G2: 뉴스 수집기   → 뉴스 이벤트 감지       → newsCh
-  G3: KRX 수집기    → 장전 수급/특이 지표     → krxCh
+[Provider Layer] — 수집
+  G1: KIS WebSocket → 실시간 체결가/호가 수신 → pricesCh   (코어 내부, 상주)
+  G2: 뉴스          → newsCh   (※ 혼합형: 별도 cron 잡이 DB write, 코어가 DB read 어댑터로 채움)
+  G3: KRX           → krxCh    (※ G2와 동일 — 프로세스 간 채널 아님. 아래 '프로세스 경계' 참조)
 
 [Strategy Layer] — 판단 Goroutine
   G4: pricesCh + newsCh + krxCh 수신
@@ -129,6 +129,27 @@
   signalCh   chan Signal        // buffered, 크기 50
   orderResultCh chan OrderResult // buffered, 크기 100
 ```
+
+**프로세스 경계 — 혼합형 (ARCHITECTURE 3-7)**
+
+```
+- 위 G1~G6 채널은 모두 '코어 프로세스' 내부. KIS WebSocket(G1)만 실시간 수집을 코어에서 직접 수행.
+- 배치 수집(news/KRX/US/econ/briefing)은 코어가 아니라 '별도 cron 잡' → DB write. 코어는 DB read로 소비.
+  즉 newsCh/krxCh는 'DB에서 읽어 코어 내부로 흘리는' 어댑터가 채운다(프로세스 간 채널 아님).
+- 모든 주문은 단일 Execution goroutine(G5)으로 직렬화. 시그널 경로와 리밸런싱 경로가
+  같은 G5·rate limiter·계좌 락을 공유 → 이중 주문 경로의 현금 경합·동일종목 충돌 방지.
+```
+
+**모듈 ↔ 런타임 매핑**
+
+| 모듈 (3-7) | 런타임 위치 | 채널 / 저장소 |
+|-----------|-------------|---------------|
+| KIS 실시간(체결/호가) | 코어 G1 | pricesCh |
+| KR/US 수집기·econ·브리핑 | 별도 cron 잡 | DB(store) → 코어 read |
+| 포트폴리오 구성기 | 코어 (주간/이벤트 트리거) | approved_target_snapshots |
+| 리밸런싱 엔진 | 코어 | rebalance_* → signalCh |
+| 서브에이전트 오케스트레이터 | 코어 G4 | ai_responses / ai_consensus |
+| 주문/안전 게이트 | 코어 G5 (단일 직렬화) | orders / orderResultCh |
 
 ---
 
@@ -169,6 +190,36 @@ Graceful Shutdown: SIGINT/SIGTERM → 신규 주문 중단 → 미체결 취소 
 - MVP: zap 구조화 로그 + Slack 알림
 - 운영: Prometheus exporter + Grafana 대시보드 전환 (zap → Prometheus bridge)
 - 핵심 메트릭: API 응답시간, Guard 차단율, 시그널 적중률, 체결 지연시간, 일일 거래 수
+```
+
+---
+
+### 10-4. 포트폴리오·서브에이전트·장애모드 코딩 원칙
+
+```
+[리밸런싱 엔진 — 결정론 필수 (ARCHITECTURE 3-8)]
+- 드리프트·수량·주문 계산에 LLM 호출 금지. 순수 함수로 구현 → 테이블 기반 단위테스트.
+- 금액 int64(원), 비중 float64. 비중→수량 변환 시 단주·최소주문금액·호가단위 반올림 규칙 명시.
+- 동일 (ApprovedTargetSnapshot, 보유 스냅샷) 입력 → 항상 동일 주문계획(재현성). golden test 필수.
+- 멱등키 = date+ticker+side+round 해시. 동일 키 재실행 시 중복 주문 금지.
+- 부분체결: 잔량 재계산 후 재시도(최대 N회), 드리프트가 허용 밴드 내면 종료.
+
+[서브에이전트 오케스트레이션 (ARCHITECTURE 3-4)]
+- 3관점(fundamental/news/risk)은 독립 goroutine + 독립 컨텍스트로 병렬 호출(errgroup).
+- 각 호출 timeout(ai.timeout) + context 취소. 1개 실패해도 나머지로 합의(부분 합의 3-4).
+- 출력은 JSON 스키마 강제 파싱. 파싱 실패 = 해당 관점 장애로 카운트(환각 텍스트 신뢰 금지).
+- risk 관점 HARD veto: risk가 SELL/HOLD면 다수 BUY여도 신규 BUY는 HARD_BLOCK(코드로 강제). 청산/손절은 무관.
+- 합의는 방향·비중 후보까지만. 주문 수량 산출은 portfolio/trading(결정론).
+
+[장애 모드 — AI_HALT (OPERATIONS 12-1)]
+- 전역 상태머신 NORMAL/DEGRADED/AI_HALT/RECOVERING. atomic 또는 RWMutex 보호.
+- AI_HALT 분기는 '신규 진입 경로'에만. 손절·추적·Guard·정산 goroutine은 상태 무관 동작.
+- gobreaker로 Claude 클라이언트 래핑. 401/403/402(인증)와 5xx/429(일시) 분기 처리.
+- 상태 전환 시 system_events 기록 + 알림(중복 알림 디바운스).
+
+[Graceful Shutdown 보강]
+- SIGINT/SIGTERM → 신규 진입·신규 리밸런싱 중단 → 진행 중 주문 결과 수신 대기
+  → 미체결 신규 매수 취소 → 채널 drain → DB flush → 종료. (매도·손절은 마지막까지 처리)
 ```
 
 ---

@@ -65,10 +65,14 @@ Strength 높은 순 → VolumeRatio 높은 순 → 시가총액 큰 순
 동일 Tier 내 최대 2개/일 신규 진입
 
 [AI Confidence Score 실행 기준]
-※ 3-AI 합의 결과의 confidence_score(0.0~1.0)에 따라 아래 기준 적용.
+※ 서브에이전트 합의 결과의 confidence_score(0.0~1.0)에 따라 아래 기준 적용.
 confidence_score ≥ 0.75  → 정상 실행
 confidence_score 0.60~0.74 → SOFT_WARN: 포지션 크기 50% 축소 후 실행
 confidence_score < 0.60  → skip (시그널 생성 보류, 알림 없음)
+
+[리스크 HARD veto — confidence보다 우선]
+※ 3관점 중 risk 관점이 SELL/HOLD면, 다수가 BUY·confidence가 높아도 신규 BUY는 HARD_BLOCK(실행 금지).
+※ 단일 모델 3관점의 상관오류를 차단하기 위한 안전장치. 청산/손절/추적 시그널은 영향 없음(fail-open). (ARCHITECTURE 3-4)
 
 [매수 금지 필터]
 → Guard 계층(7-6-5)에서 강제 적용. 상세 규칙은 Guard Layer 3~4 참조.
@@ -97,15 +101,17 @@ confidence_score < 0.60  → skip (시그널 생성 보류, 알림 없음)
 ```
 트리거: 분기 말(3/6/9/12월) 또는 목표 비중 대비 ±5%p 이상 편차 발생 시
 방법:   비중 초과 종목 일부 매도 → 비중 부족 종목 추가 매수
-종목 교체: 3-AI 합의(majority)로 유니버스 재평가. 2/3 이상 "제외" 시 교체.
+종목 교체: 서브에이전트 합의(majority)로 유니버스 재평가. 2/3 이상 "제외" 시 교체.
 손절:   개별 종목 -15% 도달 시 AI 합의로 보유/손절 판단 (자동 강제 손절 아님)
 ```
+> **리밸런싱 엔진 구현 설계**(파이프라인·Claude 서브에이전트 역할 경계·참고 오픈소스): [ARCHITECTURE.md 3-8](ARCHITECTURE.md) 참조.
+> 위 트리거/밴드(±5%p)·목표비중 상수는 결정론 Go 엔진이 소비하고, Claude는 목표비중 후보 제안·실행 승인까지만 관여(수량·주문 산출은 차단).
 
 **Tier1 신규 진입 후보 탐색 (Discovery):**
 ```
 교체 발생 시 신규 종목 선정 기준:
 1. 코스피200 시가총액 상위 30 또는 KRX 대표 섹터 ETF 중 선택
-2. 3-AI 합의(majority): 후보 풀에서 "편입 가능" 판단 시 추가
+2. 서브에이전트 합의(majority): 후보 풀에서 "편입 가능" 판단 시 추가
 3. 조건: MIN_TRADE_VALUE 1억↑, 거래대금 20일 평균 300억↑, 재무 건전성 (부채비율 200% 이하)
 4. 편입 후 최소 1분기 보유 (단기 교체 반복 방지)
 ※ 신규 후보 탐색은 7-3(통합분석) 단계의 candidates[] 출력을 활용
@@ -162,6 +168,54 @@ Risk-On  (VIX < 20):      반도체 > AI/SW > 2차전지 > 바이오
 Risk-Off (VIX 20~29.9):  방어주 > 배당주 > 음식료 > 유틸리티
 Extreme  (VIX ≥ 30):     현금 비중 확대, 신규 매수 자제
 ※ VIX_WARN(30.0) = Extreme 진입 임계값. Tier3 신규 진입 금지(6-2 리스크 상수와 동일 기준).
+```
+
+### 6-4. 포트폴리오 구성 — 목표비중 산정 (리밸런싱 엔진 입력)
+
+> 리밸런싱 엔진(ARCHITECTURE 3-8)은 **목표비중(target weight)**을 입력으로 소비한다.
+> 이 절은 그 목표비중이 *어디서 어떻게 정해지고 승인되는지*를 정의한다.
+> 핵심: **목표비중 기반 리밸런싱은 Tier1 코어(+ETF)에만 적용**한다. Tier2/3는 고정비중이 아니라 시그널로 진입/청산하므로 리밸런싱 대상이 아니다.
+
+**목표비중 2계층 구조:**
+```
+1계층 — Tier 배분 (6-1, 고정): Tier1 40% / Tier2 40% / Tier3 20%
+2계층 — Tier 내 종목별 목표비중:
+   Tier1 (리밸런싱 대상): 코어 유니버스(6-3) 종목별 목표비중 wᵢ, Σwᵢ = Tier1 배분(40%)
+   Tier2 (시그널): 목표비중 없음. 진입 시 종목당 8%(6-3), 청산 조건으로 관리
+   Tier3 (시그널): 목표비중 없음. 진입 시 종목당 5%(6-3), 청산 조건으로 관리
+```
+
+**Tier1 종목별 목표비중 산정 방식:**
+```
+기본: 정책 고정 가중 (policy-weighted) — 운영자가 코어 종목별 wᵢ를 명시, 분기마다 재평가.
+대안(설정 가능): 동일가중(equal) / 시총가중(cap-weighted). config로 선택.
+재평가 주기: 분기 말(3/6/9/12월) 또는 ±5%p 밴드 이탈 시 (6-3 Tier1 리밸런싱 기준과 동일 트리거).
+```
+
+**제약 (목표비중 검증 — target.go에서 강제):**
+```
+- Σ(Tier1 wᵢ) = MAX_TIER1_PCT(0.40), 부동소수 오차 ±0.1%p 허용
+- 단일 종목 wᵢ ≤ MAX_SINGLE_PCT(0.10)
+- 각 종목 목표 평가액 ≥ MIN_TRADE_VALUE 고려(소액 비중은 단주/최소금액 미달 → 제외 검토)
+- 현금 버퍼: Tier1 목표 합계는 배분 상한을 넘지 않음(수수료·슬리피지 여유)
+```
+
+**Claude 서브에이전트 역할 경계 (3-8과 동일 원칙):**
+```
+- Claude(3관점 합의): 목표비중 "후보" 제안 — 편입/제외/가중 조정의 근거 제시 (예: "반도체 비중 ↑").
+- 사람/정책: 후보를 승인 → 확정. AI가 비중을 직접 확정하지 않는다.
+- target.go(결정론): 승인된 목표비중만 소비. 수량·주문 산출은 코드.
+종목 교체(유니버스 편출입)는 6-3의 서브에이전트 합의(majority, 2/3 "제외") 절차를 따른다.
+```
+
+**승인 산출물 — ApprovedTargetSnapshot (리밸런싱 엔진 입력):**
+```
+{ date, tier:1, items:[{ticker, target_weight}], approved_by, consensus_id, note }
+- consensus_id → ai_consensus.id 연결(소명 Audit Log). 승인자/근거 추적.
+- 리밸런싱 엔진은 이 스냅샷과 현재 보유(snapshot.go)의 차분으로만 동작.
+- AI_HALT(12-1) 중에는 신규 승인 불가 → 마지막 ApprovedTargetSnapshot으로만 진행분 완료.
+- 승인 거버넌스: status PROPOSED→APPROVED는 운영자(본인) 1인 승인. 미승인 PROPOSED는 72시간 후 EXPIRED.
+  새 PROPOSED 생성 시 직전 미적용분은 SUPERSEDED. (DB: approved_target_snapshots.status — ARCHITECTURE 5-3)
 ```
 
 ---
